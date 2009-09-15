@@ -1,5 +1,5 @@
 #!/usr/bin/python
-#vim: set expandtab
+# vim: expandtab
 import time
 import urllib
 import urllib2
@@ -130,7 +130,7 @@ def update_chrome(known_version = ""):
       sys.exit(1)
     print("  (ok)")
 
-  LAST = ".CHROME-LATEST-VERSION"
+  LAST = os.path.join(os.path.expanduser("~"), ".CHROME-LATEST-VERSION")
   if os.name == "posix":
     OUT = "chrome-linux.zip"
   elif os.name == "mac":
