@@ -1,5 +1,4 @@
 #!/usr/bin/python
-# vim: expandtab
 import time
 import urllib
 import urllib2
@@ -8,21 +7,17 @@ import os
 import datetime
 import zipfile
 import shutil
-import platform
+import traceback
 
 start = datetime.datetime.now()
-chunk = 8196
+chunk = 8192
 timeout = 180
 blank = ""
-if os.name == "posix":
-	if platform.machine().find("64") > -1:
-		BASE = "http://build.chromium.org/buildbot/snapshots/chromium-rel-linux-64/"
-	else:
-		BASE = "http://build.chromium.org/buildbot/snapshots/chromium-rel-linux/"
-elif os.name == "mac":
-	BASE = "http://build.chromium.org/buildbot/snapshots/chromium-rel-mac/"
-else:
-	BASE = "http://build.chromium.org/buildbot/snapshots/chromium-rel-xp/"
+BASE = "http://build.chromium.org/buildbot/snapshots/chromium-rel-xp/"
+
+class ResumableDownloader(urllib.FancyURLopener):
+  def http_error_206(self, url, fp, errcode, errmsg, headers, data=None):
+    pass
 
 for i in range(75):
   blank += " "
@@ -68,7 +63,7 @@ def status2(read, size):
   msg("Downloaded: " + str(read / 1024) + " / " + str(size / 1024) + " K   [" + str(perc)\
       + "%] (" + get_Kps(read, size) + ")")
 
-def unpack(src, dst):
+def unpack(src, dst, theme):
   if (dst == ""):
     return
   if not os.path.isdir(dst):
@@ -87,17 +82,41 @@ def unpack(src, dst):
   except Exception, e:
     sys.stdout.write(" (fail)\n")
     print("(" + str(e) + ")")
+  if (len(theme) > 0):
+    msg("Setting theme to '" + theme + "'")
+    theme_dll = os.path.join(dst, "chrome-win32", "themes", theme)
+    theme_dll += ".dll"
+    if not os.path.isfile(theme_dll):
+      print("Can't find '" + theme_dll + "'; install your theme here first and re-run")
+      return
+    old_dll = os.path.join(dst, "chrome-win32", "themes", "default.dll")
+    try:
+      dst = old_dll + ".bak"
+      if os.path.isfile(dst):
+        os.remove(dst)
+      shutil.copyfile(old_dll, dst)
+      shutil.copyfile(theme_dll, old_dll)
+      print("  (ok)")
+    except Exception, e:
+      print("Unable to set theme: " + str(e))
 
 def usage():
-  print("Usage: " + os.path.basename(sys.argv[0]) + " {<extract dir>} ")
+  print("Usage: " + os.path.basename(sys.argv[0]) + " {<extract dir>} {-t <theme name>}")
   print("   <extract dir>  is a dir to optionally extract downloaded archive to")
+  print("   <theme name>   is the name of a theme dll already in the themes dir of")
+  print("                    your extracted chromium (so, first-time around, this will")
+  print("                    b0rk and you will be told where to put  your theme dll.")
+  print("                    Just re-run with the same arguments to apply the theme.")
+  print("WARNING: themes seem to quickly become incompatible with the latest chromium")
+  print("  builds. If you see a lot of red, just re-run without your -t argument to")
+  print("  revert to the default chromium theme")
 
 def get_ver():
   LATEST = BASE + "LATEST"
   fail = 0
   for i in range(5):
     try:
-      ver = urllib.urlopen(LATEST, "rb").read().strip()
+      ver = urllib2.urlopen(LATEST, "rb").read().strip()
       return ver
     except Exception, e:
       time.sleep(1)
@@ -110,17 +129,16 @@ def update_chrome(known_version = ""):
     usage()
     sys.exit(0)
   extract_out = ""
+  theme = ""
   lastarg = ""
   for arg in sys.argv[1:]:
-		if os.path.isdir(arg):
-			extract_out = arg
-		elif os.path.isdir(os.path.dirname(arg)) and not os.path.isfile(arg):
-			try:
-				os.mkdir(arg)
-			except Exception, e:
-				print("Can't make output dir '" + arg + "': " + str(e));
-				sys.exit(1)
-			extract_out = arg
+    if arg == "-t":
+      lastarg = arg
+    else:
+      if (lastarg == "-t"):
+        theme = arg
+      elif os.path.isdir(arg):
+        extract_out = arg
 
   ver = known_version
   if (ver == ""):
@@ -130,78 +148,114 @@ def update_chrome(known_version = ""):
       sys.exit(1)
     print("  (ok)")
 
-  LAST = os.path.join(os.path.expanduser("~"), ".CHROME-LATEST-VERSION")
-  if os.name == "posix":
-    OUT = "chrome-linux.zip"
-  elif os.name == "mac":
-    OUT = "chrome-mac.zip"
-  else:
-    OUT = "chrome-win32.zip"
+  LAST = ".CHROME-LATEST-VERSION"
+  OUT = "chrome-win32.zip"
   if (os.path.isfile(LAST)):
     last_dl = open(LAST, "rb").read().strip()
     if (last_dl == ver):
       print(" -> Already have latest version (" + ver + ")")
-      unpack(OUT, extract_out)
+      unpack(OUT, extract_out, theme)
       sys.exit(0)
 
   INSTALLER = BASE + ver + "/" + OUT
 
   print("Download starts... (version: " + ver + ")")
-  print("[ url: " + INSTALLER + " ]")
-  try:
-    start = datetime.datetime.now()
-    fp = urllib2.urlopen(INSTALLER, "rb")
-    h = fp.headers.headers;
-    stLen = 0
-    for h in fp.headers.headers:
-      parts = h.strip().split(":")
-      if (parts[0].lower() == "content-length"):
-        stLen = int(parts[1].strip())
-    stRead = 0
-    new = ""
-    oldlen = -1
-    if (stLen == 0):
-      # can't determine length; just carry on
-      while (oldlen != len(new)):
-        oldlen = len(new)
-        new += fp.read(chunk)
-        status1(len(new))
-    else:
-      fail = 0
-      while (stRead < stLen):
-        part = fp.read(chunk)
-        stRead += len(part)
-        new += part
-        if (len(part) == 0):
-          fail += 1
-        else:
-          fail = 0
-        if (fail > timeout):
-          newver = get_ver()
-          if (newver != ver):
-            print("\nVersion changed upstreeam! Trying again...")
-            update_chrome()
+  print("(url: " + INSTALLER + ")")
+  offset = 0
+
+  attempts = 0
+  while True:
+    if attempts > 0:
+      print("Resuming from %i bytes..." %(offset))
+    attempts += 1
+    try:
+      start = datetime.datetime.now()
+      fp = urllib2.urlopen(INSTALLER)
+      h = fp.headers.headers;
+      stLen = 0
+      resuming = False
+      for h in fp.headers.headers:
+        parts = h.strip().split(":")
+        if (parts[0].lower() == "content-length"):
+          resuming = True
+          stLen = int(parts[1].strip())
+          if offset > 0:
+            fp.close()
+            r = ResumableDownloader()
+            r.addheader("Range", "bytes=" + str(offset) + "-")
+            fp = r.open(INSTALLER)
+            for h in fp.headers.headers:
+              parts = h.strip().split(":")
+              if (parts[0].lower() == "content-length"):
+                stLen = int(parts[1].strip())
+      if offset > 0 and not resuming:
+        offset = 0
+      stRead = 0
+      new = ""
+      oldlen = -1
+      if offset == 0:
+        fpout = open(OUT + ".part", "wb")
+      else:
+        fpout = open(OUT + ".part", "ab")
+      if (stLen == 0):
+        read_bytes = 0;
+        fail = 0
+        # can't determine length; just carry on
+        while (oldlen != read_bytes) and (fail < 5):
+          oldlen = read_bytes
+          part = fp.read(chunk)
+          if len(part) == 0:
+            fail == 1
+            time.sleep(50)
+            continue
+          read_bytes += len(part)
+          fpout.write(part)
+          status1(len(new))
+        break
+      else:
+        fail = 0
+        while (stRead < stLen):
+          part = fp.read(chunk)
+          stRead += len(part)
+          fpout.write(part)
+          if (len(part) == 0):
+            fail += 1
           else:
-            print("timed out ):")
-            print("URL was: " + INSTALLER)
-            sys.exit(1)
-        elif (fail > 0):
-          time.sleep(1)
-        status2(stRead, stLen)
+            fail = 0
+          if (fail > timeout):
+            newver = get_ver()
+            if (newver != ver):
+              print("\nVersion changed upstreeam! Trying again...")
+              update_chrome()
+            else:
+              print("timed out ):")
+              fpout.close()
+              fp.close()
+              offset = os.stat(OUT + ".part").st_size
+              break
+          elif (fail > 0):
+            time.sleep(1)
+          status2(stRead, stLen)
+        if (stRead >= stLen):
+          break
 
-  except Exception, e:
-    print("Unable to download latest zip (" + INSTALLER + "): " + str(e))
-    sys.exit(1)
+    except Exception, e:
+      print("Unable to download latest zip (" + INSTALLER + "): " + str(e))
+      traceback.print_exc()
+      sys.exit(1)
 
-  print("\nWriting to file...")
-  try:
-    fp = open(OUT, "wb")
-    fp.write(new)
-    fp.close()
-  except Exception, e:
-    print("Unable to save new archive: " + str(e))
-    sys.exit(1)
-
+  #print("\nWriting to file...")
+  #try:
+  #  fp = open(OUT, "wb")
+  #  fp.write(new)
+  #  fp.close()
+  #except Exception, e:
+  #  print("Unable to save new archive: " + str(e))
+  #  sys.exit(1)
+  fpout.close()
+  if os.path.isfile(OUT):
+    os.remove(OUT)
+  os.rename(OUT + ".part", OUT)
   print("Chrome archive updated successfully!")
   try:
     fp = open(LAST, "wb")
@@ -210,7 +264,12 @@ def update_chrome(known_version = ""):
   except Exception, e:
     print("WARNING: Unable to save download version to '" + LAST + "': " + str(e))
 
-  unpack(OUT, extract_out)
+  unpack(OUT, extract_out, theme)
 
 if __name__ == "__main__":
-  update_chrome()
+  #update_chrome()
+  #sys.exit(0)
+  try:
+    update_chrome()
+  except KeyboardInterrupt:
+    print("aborted.")
