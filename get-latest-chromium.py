@@ -1,8 +1,15 @@
 #!/usr/bin/python
+# determine major version of the python engine:
+#   this script was originall written for py 2.6
+#   but adapted for 3.1; I'd like both to work
+import sys
+pyver = int(sys.version.split(" ")[0].split(".")[0])
 import time
 import urllib
-import urllib2
-import sys
+if pyver == 3:
+  import urllib.request
+else:
+  import urllib2
 import os
 import datetime
 import zipfile
@@ -10,14 +17,22 @@ import shutil
 import traceback
 
 start = datetime.datetime.now()
-chunk = 8192
+last_transferredK = 0
+min_chunk = 1024
+max_chunk = 65536
+chunk = min_chunk
 timeout = 180
 blank = ""
 BASE = "http://build.chromium.org/buildbot/snapshots/chromium-rel-xp/"
 
-class ResumableDownloader(urllib.FancyURLopener):
-  def http_error_206(self, url, fp, errcode, errmsg, headers, data=None):
-    pass
+if pyver == 3:
+  class ResumableDownloader(urllib.request.FancyURLopener):
+    def http_error_206(self, url, fp, errcode, errmsg, headers, data=None):
+      pass
+else:
+  class ResumableDownloader(urllib.FancyURLopener):
+    def http_error_206(self, url, fp, errcode, errmsg, headers, data=None):
+      pass
 
 for i in range(75):
   blank += " "
@@ -29,11 +44,16 @@ def msg(s):
 def get_dl_secs():
   global start
   td = datetime.datetime.now() - start
-  return td.seconds
+  return td.seconds + (td.microseconds / 1000000.0)
 
 def get_Kps(transferred, size):
+  global last_transferredK, start
   secs = get_dl_secs()
-  transferredK = (float(transferred) / 1024.0)
+  transferredK = (float(transferred) / 1024.0) - last_transferredK
+  if last_transferredK != 0:
+    start = datetime.datetime.now()
+  last_transferredK += transferredK
+
   if (secs > 0):
     transferredKS = (float(transferredK) / float(secs))
     if (size > 0):
@@ -54,14 +74,16 @@ def clearline():
 def status1(val):
   secs = get_dl_secs()
   clearline()
-  msg("Downloaded: " + str(val / 1024) + " K (" + get_Kps(val, 0) + ")")
+  #msg("Downloaded: " + str(val / 1024) + " K (" + get_Kps(val, 0) + ")")
+  msg("Downloaded: %i K (%s)" % ((val / 1024), get_Kps(val, 0)))
 
 def status2(read, size):
   global start
   clearline()
   perc = "%.2f" % ((float(read) * 100.0) / float(size))
-  msg("Downloaded: " + str(read / 1024) + " / " + str(size / 1024) + " K   [" + str(perc)\
-      + "%] (" + get_Kps(read, size) + ")")
+#  msg("Downloaded: " + str(read / 1024) + " / " + str(size / 1024) + " K   [" + str(perc)\
+#      + "%] (" + get_Kps(read, size) + ")")
+  msg("Downloaded: %i / %i K [%s %%] (%s)" % (read/1024, size/1024, perc, get_Kps(read, size)))
 
 def unpack(src, dst, theme):
   if (dst == ""):
@@ -69,7 +91,7 @@ def unpack(src, dst, theme):
   if not os.path.isdir(dst):
     try:
       os.mkdir(dst)
-    except Exception, e:
+    except Exception as e:
       print("Can't extract to '" + dst + "': " + str(e))
       return
   msg("Extracting to " + dst)
@@ -79,7 +101,7 @@ def unpack(src, dst, theme):
       z.extract(f, sys.argv[1])
     z.close()
     print("  (ok)")
-  except Exception, e:
+  except Exception as e:
     sys.stdout.write(" (fail)\n")
     print("(" + str(e) + ")")
   if (len(theme) > 0):
@@ -97,7 +119,7 @@ def unpack(src, dst, theme):
       shutil.copyfile(old_dll, dst)
       shutil.copyfile(theme_dll, old_dll)
       print("  (ok)")
-    except Exception, e:
+    except Exception as e:
       print("Unable to set theme: " + str(e))
 
 def usage():
@@ -116,15 +138,17 @@ def get_ver():
   fail = 0
   for i in range(5):
     try:
-      ver = urllib2.urlopen(LATEST, "rb").read().strip()
+      #ver = urllib2.urlopen(LATEST, "rb").read().strip()
+      ver = urllib.request.urlopen(LATEST).read().decode().strip()
       return ver
-    except Exception, e:
+    except Exception as e:
       time.sleep(1)
 
   print("\nUnable to get LATEST version: " + str(e))
   return ""
 
 def update_chrome(known_version = ""):
+  global chunk,min_chunk,max_chunk,pyver
   if ((sys.argv[1:].count("-h") > 0) or (sys.argv[1:].count("-h") > 0)):
     usage()
     sys.exit(0)
@@ -139,6 +163,13 @@ def update_chrome(known_version = ""):
         theme = arg
       elif os.path.isdir(arg):
         extract_out = arg
+      elif os.path.isdir(os.path.dirname(arg)):
+        try:
+          os.mkdir(arg)
+          extract_out = arg
+        except:
+          print("Can't find or create dir %s; aborting" % arg)
+          sys.exit(1)
 
   ver = known_version
   if (ver == ""):
@@ -148,13 +179,15 @@ def update_chrome(known_version = ""):
       sys.exit(1)
     print("  (ok)")
 
-  LAST = ".CHROME-LATEST-VERSION"
+  LAST = os.path.join(os.path.expanduser("~"), ".CHROME-LATEST-VERSION")
   OUT = "chrome-win32.zip"
   if (os.path.isfile(LAST)):
-    last_dl = open(LAST, "rb").read().strip()
+    last_dl = open(LAST, "r").read().strip()
     if (last_dl == ver):
       print(" -> Already have latest version (" + ver + ")")
-      unpack(OUT, extract_out, theme)
+      tmp = os.path.join(os.path.expanduser("~"), OUT)
+      if os.path.isfile(tmp):
+        unpack(OUT, extract_out, theme)
       sys.exit(0)
 
   INSTALLER = BASE + ver + "/" + OUT
@@ -170,12 +203,19 @@ def update_chrome(known_version = ""):
     attempts += 1
     try:
       start = datetime.datetime.now()
-      fp = urllib2.urlopen(INSTALLER)
-      h = fp.headers.headers;
+      if pyver == 2:
+        fp = urllib2.urlopen(INSTALLER)
+        headers = fp.headers.headers;
+      else:
+        fp = urllib.request.urlopen(INSTALLER)
+        headers = fp.getheaders()
       stLen = 0
       resuming = False
-      for h in fp.headers.headers:
-        parts = h.strip().split(":")
+      for h in headers:
+        if pyver == 2:
+          parts = h.strip().split(":")
+        else:
+          parts = h
         if (parts[0].lower() == "content-length"):
           resuming = True
           stLen = int(parts[1].strip())
@@ -194,9 +234,9 @@ def update_chrome(known_version = ""):
       new = ""
       oldlen = -1
       if offset == 0:
-        fpout = open(OUT + ".part", "wb")
+        fpout = open(os.path.join(os.path.expanduser("~"), OUT) + ".part", "wb")
       else:
-        fpout = open(OUT + ".part", "ab")
+        fpout = open(os.path.join(os.path.expanduser("~"), OUT) + ".part", "ab")
       if (stLen == 0):
         read_bytes = 0;
         fail = 0
@@ -217,6 +257,13 @@ def update_chrome(known_version = ""):
         while (stRead < stLen):
           part = fp.read(chunk)
           stRead += len(part)
+          if len(part) < chunk:
+            chunk -= min_chunk
+            if chunk <= 0:
+              chunk = min_chunk
+          else:
+            if chunk < max_chunk:
+              chunk += min_chunk
           fpout.write(part)
           if (len(part) == 0):
             fail += 1
@@ -239,7 +286,7 @@ def update_chrome(known_version = ""):
         if (stRead >= stLen):
           break
 
-    except Exception, e:
+    except Exception as e:
       print("Unable to download latest zip (" + INSTALLER + "): " + str(e))
       traceback.print_exc()
       sys.exit(1)
@@ -249,7 +296,7 @@ def update_chrome(known_version = ""):
   #  fp = open(OUT, "wb")
   #  fp.write(new)
   #  fp.close()
-  #except Exception, e:
+  #except Exception as e:
   #  print("Unable to save new archive: " + str(e))
   #  sys.exit(1)
   fpout.close()
@@ -258,10 +305,10 @@ def update_chrome(known_version = ""):
   os.rename(OUT + ".part", OUT)
   print("Chrome archive updated successfully!")
   try:
-    fp = open(LAST, "wb")
+    fp = open(LAST, "w")
     fp.write(ver)
     fp.close()
-  except Exception, e:
+  except Exception as e:
     print("WARNING: Unable to save download version to '" + LAST + "': " + str(e))
 
   unpack(OUT, extract_out, theme)
