@@ -24,6 +24,7 @@ chunk = min_chunk
 timeout = 180
 blank = ""
 BASE = "http://build.chromium.org/buildbot/snapshots/chromium-rel-xp/"
+BASE_OUT = os.path.expanduser("~") # default "temp" dir is user's home
 
 if pyver == 3:
   class ResumableDownloader(urllib.request.FancyURLopener):
@@ -123,12 +124,15 @@ def unpack(src, dst, theme):
       print("Unable to set theme: " + str(e))
 
 def usage():
-  print("Usage: " + os.path.basename(sys.argv[0]) + " {<extract dir>} {-t <theme name>}")
+  print("Usage: " + os.path.basename(sys.argv[0]) + " {<extract dir>} {-t <theme name>} {-i <intermediatary dir}")
   print("   <extract dir>  is a dir to optionally extract downloaded archive to")
   print("   <theme name>   is the name of a theme dll already in the themes dir of")
   print("                    your extracted chromium (so, first-time around, this will")
   print("                    b0rk and you will be told where to put  your theme dll.")
   print("                    Just re-run with the same arguments to apply the theme.")
+  print("   <intermediatary dir> is an optional override for the intermediatary")
+  print("                    dir for operations (default is your home dir:")
+  print("                    " + os.path.expanduser("~"))
   print("WARNING: themes seem to quickly become incompatible with the latest chromium")
   print("  builds. If you see a lot of red, just re-run without your -t argument to")
   print("  revert to the default chromium theme")
@@ -148,7 +152,7 @@ def get_ver():
   return ""
 
 def update_chrome(known_version = ""):
-  global chunk,min_chunk,max_chunk,pyver
+  global chunk,min_chunk,max_chunk,pyver,BASE_OUT
   if ((sys.argv[1:].count("-h") > 0) or (sys.argv[1:].count("-h") > 0)):
     usage()
     sys.exit(0)
@@ -156,11 +160,18 @@ def update_chrome(known_version = ""):
   theme = ""
   lastarg = ""
   for arg in sys.argv[1:]:
-    if arg == "-t":
+    if arg == "-t" or arg == "-i":
       lastarg = arg
     else:
-      if (lastarg == "-t"):
+      if (lastarg == "-i"):
+        if os.path.isdir(arg):
+          lastarg = ""
+          BASE_OUT = arg
+        else:
+          print("-i requires a valid intermediatary directory to work")
+      elif (lastarg == "-t"):
         theme = arg
+        lastarg = ""
       elif os.path.isdir(arg):
         extract_out = arg
       elif os.path.isdir(os.path.dirname(arg)):
@@ -179,15 +190,16 @@ def update_chrome(known_version = ""):
       sys.exit(1)
     print("  (ok)")
 
-  LAST = os.path.join(os.path.expanduser("~"), ".CHROME-LATEST-VERSION")
+  LAST = os.path.join(BASE_OUT, ".CHROME-LATEST-VERSION")
   OUT = "chrome-win32.zip"
   if (os.path.isfile(LAST)):
     last_dl = open(LAST, "r").read().strip()
     if (last_dl == ver):
       print(" -> Already have latest version (" + ver + ")")
-      tmp = os.path.join(os.path.expanduser("~"), OUT)
+      tmp = os.path.join(BASE_OUT, OUT)
       if os.path.isfile(tmp):
         unpack(OUT, extract_out, theme)
+      time.sleep(2)
       sys.exit(0)
 
   INSTALLER = BASE + ver + "/" + OUT
@@ -234,9 +246,10 @@ def update_chrome(known_version = ""):
       new = ""
       oldlen = -1
       if offset == 0:
-        fpout = open(os.path.join(os.path.expanduser("~"), OUT) + ".part", "wb")
+        print("Getting %s" % (os.path.join(BASE_OUT, OUT)))
+        fpout = open(os.path.join(BASE_OUT, OUT) + ".part", "wb")
       else:
-        fpout = open(os.path.join(os.path.expanduser("~"), OUT) + ".part", "ab")
+        fpout = open(os.path.join(BASE_OUT, OUT) + ".part", "ab")
       if (stLen == 0):
         read_bytes = 0;
         fail = 0
