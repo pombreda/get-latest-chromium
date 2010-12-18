@@ -15,6 +15,7 @@ import datetime
 import zipfile
 import shutil
 import traceback
+import platform
 
 start = datetime.datetime.now()
 last_transferredK = 0
@@ -23,8 +24,19 @@ max_chunk = 65536
 chunk = min_chunk
 timeout = 180
 blank = ""
-BASE = "http://build.chromium.org/buildbot/snapshots/chromium-rel-xp/"
 BASE_OUT = os.path.expanduser("~") # default "temp" dir is user's home
+if os.name == "posix":
+  OUT = "chrome-linux.zip"
+  if platform.machine().find("64") > -1:
+    BASE = "http://build.chromium.org/buildbot/snapshots/chromium-rel-linux-64/"
+  else:
+    BASE = "http://build.chromium.org/buildbot/snapshots/chromium-rel-linux/"
+elif os.name == "mac":
+  BASE = "http://build.chromium.org/buildbot/snapshots/chromium-rel-mac/"
+  OUT = "chrome-mac.zip"
+else:
+  BASE = "http://build.chromium.org/buildbot/snapshots/chromium-rel-xp/"
+  OUT = "chrome-win32.zip"
 
 if pyver == 3:
   class ResumableDownloader(urllib.request.FancyURLopener):
@@ -142,8 +154,10 @@ def get_ver():
   fail = 0
   for i in range(5):
     try:
-      #ver = urllib2.urlopen(LATEST, "rb").read().strip()
-      ver = urllib.request.urlopen(LATEST).read().decode().strip()
+      if pyver == 2:
+        ver = urllib2.urlopen(LATEST, "rb").read().strip()
+      else:
+        ver = urllib.request.urlopen(LATEST).read().decode().strip()
       return ver
     except Exception as e:
       time.sleep(1)
@@ -152,7 +166,7 @@ def get_ver():
   return ""
 
 def update_chrome(known_version = ""):
-  global chunk,min_chunk,max_chunk,pyver,BASE_OUT
+  global chunk,min_chunk,max_chunk,pyver,BASE_OUT,OUT
   if ((sys.argv[1:].count("-h") > 0) or (sys.argv[1:].count("-h") > 0)):
     usage()
     sys.exit(0)
@@ -191,7 +205,6 @@ def update_chrome(known_version = ""):
     print("  (ok)")
 
   LAST = os.path.join(BASE_OUT, ".CHROME-LATEST-VERSION")
-  OUT = "chrome-win32.zip"
   if (os.path.isfile(LAST)):
     last_dl = open(LAST, "r").read().strip()
     if (last_dl == ver):
