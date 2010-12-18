@@ -87,15 +87,12 @@ def clearline():
 def status1(val):
   secs = get_dl_secs()
   clearline()
-  #msg("Downloaded: " + str(val / 1024) + " K (" + get_Kps(val, 0) + ")")
   msg("Downloaded: %i K (%s)" % ((val / 1024), get_Kps(val, 0)))
 
 def status2(read, size):
   global start
   clearline()
   perc = "%.2f" % ((float(read) * 100.0) / float(size))
-#  msg("Downloaded: " + str(read / 1024) + " / " + str(size / 1024) + " K   [" + str(perc)\
-#      + "%] (" + get_Kps(read, size) + ")")
   msg("Downloaded: %i / %i K [%s %%] (%s)" % (read/1024, size/1024, perc, get_Kps(read, size)))
 
 def unpack(src, dst, theme):
@@ -211,7 +208,7 @@ def update_chrome(known_version = ""):
       print(" -> Already have latest version (" + ver + ")")
       tmp = os.path.join(BASE_OUT, OUT)
       if os.path.isfile(tmp):
-        unpack(OUT, extract_out, theme)
+        unpack(os.path.join(BASE_OUT, OUT), extract_out, theme)
       time.sleep(2)
       sys.exit(0)
 
@@ -304,7 +301,7 @@ def update_chrome(known_version = ""):
               print("timed out ):")
               fpout.close()
               fp.close()
-              offset = os.stat(OUT + ".part").st_size
+              offset = os.stat((os.path.join(BASE_OUT, OUT)) + ".part").st_size
               break
           elif (fail > 0):
             time.sleep(1)
@@ -326,9 +323,9 @@ def update_chrome(known_version = ""):
   #  print("Unable to save new archive: " + str(e))
   #  sys.exit(1)
   fpout.close()
-  if os.path.isfile(OUT):
-    os.remove(OUT)
-  os.rename(OUT + ".part", OUT)
+  if os.path.isfile(os.path.join(BASE_OUT, OUT)):
+    os.remove(os.path.join(BASE_OUT, OUT))
+  os.rename(os.path.join(BASE_OUT, OUT) + ".part", os.path.join(BASE_OUT, OUT))
   print("Chrome archive updated successfully!")
   try:
     fp = open(LAST, "w")
