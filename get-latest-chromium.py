@@ -24,26 +24,30 @@ max_chunk = 65536
 chunk = min_chunk
 timeout = 180
 blank = ""
+#BASE = "http://build.chromium.org/buildbot/snapshots/chromium-rel-xp/"
+BASE_BASE = "http://build.chromium.org/f/chromium/snapshots/"
 BASE_OUT = os.path.expanduser("~") # default "temp" dir is user's home
 if os.name == "posix":
   OUT = "chrome-linux.zip"
   if platform.machine().find("64") > -1:
-    BASE = "http://build.chromium.org/buildbot/snapshots/chromium-rel-linux-64/"
+    BASE = BASE_BASE + "chromium-rel-linux-64/"
   else:
-    BASE = "http://build.chromium.org/buildbot/snapshots/chromium-rel-linux/"
+    BASE = BASE_BASE + "chromium-rel-linux/"
 elif os.name == "mac":
-  BASE = "http://build.chromium.org/buildbot/snapshots/chromium-rel-mac/"
+  BASE = BASE_BASE + "chromium-rel-mac/"
   OUT = "chrome-mac.zip"
 else:
-  BASE = "http://build.chromium.org/buildbot/snapshots/chromium-rel-xp/"
+  BASE = BASE_BASE + "chromium-rel-xp/"
   OUT = "chrome-win32.zip"
 
 if pyver == 3:
   class ResumableDownloader(urllib.request.FancyURLopener):
+    version = "Mozilla/5.0 (Windows; U; Windows NT 5.1; en-GB; rv:1.9.0.5) Gecko/2008120122 Firefox/3.0.5"
     def http_error_206(self, url, fp, errcode, errmsg, headers, data=None):
       pass
 else:
   class ResumableDownloader(urllib.FancyURLopener):
+    version = "Mozilla/5.0 (Windows; U; Windows NT 5.1; en-GB; rv:1.9.0.5) Gecko/2008120122 Firefox/3.0.5"
     def http_error_206(self, url, fp, errcode, errmsg, headers, data=None):
       pass
 
@@ -87,12 +91,15 @@ def clearline():
 def status1(val):
   secs = get_dl_secs()
   clearline()
+  #msg("Downloaded: " + str(val / 1024) + " K (" + get_Kps(val, 0) + ")")
   msg("Downloaded: %i K (%s)" % ((val / 1024), get_Kps(val, 0)))
 
 def status2(read, size):
   global start
   clearline()
   perc = "%.2f" % ((float(read) * 100.0) / float(size))
+#  msg("Downloaded: " + str(read / 1024) + " / " + str(size / 1024) + " K   [" + str(perc)\
+#      + "%] (" + get_Kps(read, size) + ")")
   msg("Downloaded: %i / %i K [%s %%] (%s)" % (read/1024, size/1024, perc, get_Kps(read, size)))
 
 def unpack(src, dst, theme):
@@ -106,6 +113,7 @@ def unpack(src, dst, theme):
       return
   msg("Extracting to " + dst)
   try:
+    print("src: %s" % src)
     z = zipfile.ZipFile(src)
     for f in z.namelist():
       z.extract(f, sys.argv[1])
@@ -151,15 +159,16 @@ def get_ver():
   fail = 0
   for i in range(5):
     try:
-      if pyver == 2:
-        ver = urllib2.urlopen(LATEST, "rb").read().strip()
-      else:
-        ver = urllib.request.urlopen(LATEST).read().decode().strip()
+      #ver = urllib2.urlopen(LATEST, "rb").read().strip()
+      #ver = urllib.request.urlopen(LATEST).read().decode().strip()
+      r = ResumableDownloader();
+      ver = r.open(LATEST, "rb").read().decode().strip()
       return ver
     except Exception as e:
+      print("\nUnable to get LATEST version: " + str(e))
+      print(LATEST)
       time.sleep(1)
 
-  print("\nUnable to get LATEST version: " + str(e))
   return ""
 
 def update_chrome(known_version = ""):
@@ -200,8 +209,8 @@ def update_chrome(known_version = ""):
     if (len(ver) == 0):
       sys.exit(1)
     print("  (ok)")
-
   LAST = os.path.join(BASE_OUT, ".CHROME-LATEST-VERSION")
+  OUT = "chrome-win32.zip"
   if (os.path.isfile(LAST)):
     last_dl = open(LAST, "r").read().strip()
     if (last_dl == ver):
@@ -219,20 +228,29 @@ def update_chrome(known_version = ""):
   offset = 0
 
   attempts = 0
+  intermediate_file = os.path.join(BASE_OUT, OUT) + "." + ver
+  if (os.path.isfile(intermediate_file)):
+    st = os.stat(intermediate_file)
+    offset = st.st_size
+  fpout = None
   while True:
-    if attempts > 0:
+    if offset > 0:
       print("Resuming from %i bytes..." %(offset))
     attempts += 1
     try:
       start = datetime.datetime.now()
       if pyver == 2:
         fp = urllib2.urlopen(INSTALLER)
-        headers = fp.headers.headers;
+        if pyver == 3:
+          headers = fp.headers
+        else:
+          headers = fp.headers.headers
       else:
         fp = urllib.request.urlopen(INSTALLER)
         headers = fp.getheaders()
       stLen = 0
       resuming = False
+      eof = False
       for h in headers:
         if pyver == 2:
           parts = h.strip().split(":")
@@ -245,11 +263,21 @@ def update_chrome(known_version = ""):
             fp.close()
             r = ResumableDownloader()
             r.addheader("Range", "bytes=" + str(offset) + "-")
-            fp = r.open(INSTALLER)
-            for h in fp.headers.headers:
-              parts = h.strip().split(":")
-              if (parts[0].lower() == "content-length"):
-                stLen = int(parts[1].strip())
+            fp = r.open(INSTALLER, "rb")
+            if (fp.fp.closed):
+              eof = True
+              print("File appears to be completely down...")
+              break
+            for h in fp.headers:
+              if pyver == 3:
+                if h.lower() == "content-length":
+                  stLen = int(fp.headers[h])
+              else:
+                parts = h.strip().split(":")
+                if (parts[0].lower() == "content-length"):
+                  stLen = int(parts[1].strip())
+      if eof:
+        break
       if offset > 0 and not resuming:
         offset = 0
       stRead = 0
@@ -257,9 +285,9 @@ def update_chrome(known_version = ""):
       oldlen = -1
       if offset == 0:
         print("Getting %s" % (os.path.join(BASE_OUT, OUT)))
-        fpout = open(os.path.join(BASE_OUT, OUT) + ".part", "wb")
+        fpout = open(intermediate_file, "wb")
       else:
-        fpout = open(os.path.join(BASE_OUT, OUT) + ".part", "ab")
+        fpout = open(intermediate_file, "ab")
       if (stLen == 0):
         read_bytes = 0;
         fail = 0
@@ -322,10 +350,11 @@ def update_chrome(known_version = ""):
   #except Exception as e:
   #  print("Unable to save new archive: " + str(e))
   #  sys.exit(1)
-  fpout.close()
+  if (fpout != None):
+    fpout.close()
   if os.path.isfile(os.path.join(BASE_OUT, OUT)):
     os.remove(os.path.join(BASE_OUT, OUT))
-  os.rename(os.path.join(BASE_OUT, OUT) + ".part", os.path.join(BASE_OUT, OUT))
+  os.rename(intermediate_file, os.path.join(BASE_OUT, OUT))
   print("Chrome archive updated successfully!")
   try:
     fp = open(LAST, "w")
@@ -334,7 +363,8 @@ def update_chrome(known_version = ""):
   except Exception as e:
     print("WARNING: Unable to save download version to '" + LAST + "': " + str(e))
 
-  unpack(OUT, extract_out, theme)
+  unpack(os.path.join(BASE_OUT, OUT), extract_out, theme)
+  #unpack(OUT, extract_out, theme)
 
 if __name__ == "__main__":
   #update_chrome()
