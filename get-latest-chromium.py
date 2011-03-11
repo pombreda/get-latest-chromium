@@ -113,10 +113,9 @@ def unpack(src, dst, theme):
       return
   msg("Extracting to " + dst)
   try:
-    print("src: %s" % src)
     z = zipfile.ZipFile(src)
     for f in z.namelist():
-      z.extract(f, sys.argv[1])
+      z.extract(f, dst)
     z.close()
     print("  (ok)")
   except Exception as e:
